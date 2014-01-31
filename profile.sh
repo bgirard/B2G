@@ -205,6 +205,60 @@ start_with_args() {
 
 ###########################################################################
 #
+# Wait for the user to disconnect from ADB. This must be done for power
+# harness because others we will charge of the USB connection.
+#
+wait_for_adb_disconnect() {
+  while [ true ];
+  do
+    ${ADB} shell "ls" > /dev/null 2> /dev/null
+    if [ $? -ne "0" ]; then
+      break;
+    fi
+  done
+}
+wait_for_adb_connect() {
+  while [ true ];
+  do
+    ${ADB} shell "ls" > /dev/null 2> /dev/null
+    if [ $? -eq "0" ]; then
+      break;
+    fi
+  done
+}
+
+###########################################################################
+#
+# Start the profiling in the power harness mode.
+#
+HELP_start="Starts a power harness capture. Start profiling b2g processes first."
+cmd_power() {
+  if [ -z "$MOZ_AMP" ]; then
+    echo "\$MOZ_AMP must point to the moz amp repo for power harness profiling."
+    exit 1
+  fi
+
+  echo "Disconnect device to stop usb charging"
+  wait_for_adb_disconnect
+
+  echo "Starting power harness"
+  python $MOZ_AMP/jsonSampler.py > power.json &
+  sampler_pid=$!
+
+  echo "Reconnect device to stop profiling"
+  wait_for_adb_connect
+  echo "Device connected, capturing profile"
+
+  echo "Stop power sampling PID: $sampler_pid"
+  kill -2 $sampler_pid
+  wait # Wait for the power harness to exit
+  MOZ_AMP_PROFILE=power.json
+  cmd_capture
+  rm power.json
+}
+
+###########################################################################
+#
 # Removes any stale profile files which might be left on the device
 #
 remove_profile_files() {
@@ -277,9 +331,9 @@ cmd_capture() {
         fi
       fi
     done
-    if [ $profiles_count -gt 1 ]; then
+    if [ $profiles_count -gt 1 -o -n "$MOZ_AMP_PROFILE" ]; then
       echo "Merging profile:$profiles_to_merge"
-      ./gecko/tools/profiler/merge-profiles.py $profiles_to_merge > profile_captured.sym
+      ./gecko/tools/profiler/merge-profiles.py --power=$MOZ_AMP_PROFILE $profiles_to_merge > profile_captured.sym
       echo ""
       echo "Results: profile_captured.sym"
     fi
